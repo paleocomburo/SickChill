@@ -1,3 +1,3 @@
 from .handler import ShowIndexer
 
-indexer = None
+indexer: ShowIndexer = None

@@ -21,9 +21,9 @@ def should_refresh(exception_list):
     seconds_per_day = 24 * 60 * 60
 
     cache_db_con = db.DBConnection("cache.db")
-    rows = cache_db_con.select("SELECT last_refreshed FROM scene_exceptions_refresh WHERE list = ?", [exception_list])
-    if rows:
-        last_refresh = int(rows[0]["last_refreshed"])
+    result = cache_db_con.select_one("SELECT last_refreshed FROM scene_exceptions_refresh WHERE list = ?", [exception_list])
+    if result:
+        last_refresh = int(result["last_refreshed"])
         return int(time.mktime(datetime.datetime.today().timetuple())) > last_refresh + seconds_per_day
     else:
         return True
@@ -160,7 +160,7 @@ def get_scene_exception_by_name_multiple(show_name):
 
         if show_name.lower() in (cur_exception_name.lower(), sickchill.oldbeard.helpers.sanitizeSceneName(cur_exception_name).lower().replace(".", " ")):
 
-            logger.debug("Scene exception lookup got indexer id {0}, using that".format(cur_indexer_id))
+            logger.debug("Scene exception lookup got indexer id {cur_indexer_id}, using that")
 
             out.append((cur_indexer_id, int(cur_exception["season"])))
 
@@ -170,7 +170,7 @@ def get_scene_exception_by_name_multiple(show_name):
     return [(None, None)]
 
 
-def retrieve_exceptions():  # pylint:disable=too-many-locals, too-many-branches
+def retrieve_exceptions(show=None) -> None:  # pylint:disable=too-many-locals, too-many-branches
     """
     Looks up the exceptions on github, parses them into a dict, and inserts them into the
     scene_exceptions table in cache.db. Also clears the scene name cache.
@@ -178,31 +178,20 @@ def retrieve_exceptions():  # pylint:disable=too-many-locals, too-many-branches
     # SC exceptions
     exception_dict = _sickchill_exceptions_fetcher()
 
-    # XEM scene exceptions
-    xem_exception_dict = _xem_exceptions_fetcher()
-    for xem_ex in xem_exception_dict:
-        if xem_ex in exception_dict:
-            exception_dict[xem_ex] += exception_dict[xem_ex]
-        else:
-            exception_dict[xem_ex] = xem_exception_dict[xem_ex]
+    # external scene exceptions
+    specific_exception_dict = _specific_exceptions_fetcher(show=show)
 
-    # AniDB scene exceptions
-    anidb_exception_dict = _anidb_exceptions_fetcher()
-    for anidb_ex in anidb_exception_dict:
-        if anidb_ex in exception_dict:
-            exception_dict[anidb_ex] += anidb_exception_dict[anidb_ex]
-        else:
-            exception_dict[anidb_ex] = anidb_exception_dict[anidb_ex]
+    helpers.deepupdate(exception_dict, specific_exception_dict)
 
     queries = []
     cache_db_con = db.DBConnection("cache.db")
     for cur_indexer_id, cur_exception_list in exception_dict.items():
-        sql_ex = cache_db_con.select("SELECT show_name FROM scene_exceptions WHERE indexer_id = ?;", [cur_indexer_id])
-        existing_exceptions = (x["show_name"] for x in sql_ex)
+        sql_ex = cache_db_con.select("SELECT show_name, season FROM scene_exceptions WHERE indexer_id = ?;", [cur_indexer_id])
+        existing_exceptions = ((x["show_name"], x["season"]) for x in sql_ex)
 
         for cur_exception_dict in cur_exception_list:
             for cur_exception, cur_season in cur_exception_dict.items():
-                if cur_exception not in existing_exceptions:
+                if (cur_exception, cur_season) not in existing_exceptions:
                     queries.append(
                         ["INSERT OR IGNORE INTO scene_exceptions (indexer_id, show_name, season) VALUES (?,?,?);", [cur_indexer_id, cur_exception, cur_season]]
                     )
@@ -237,15 +226,9 @@ def update_custom_scene_exceptions(indexer_id, scene_exceptions):
 def _sickchill_exceptions_fetcher():
     sickchill_exception_dict = {}
 
-    do_refresh = False
-    for indexer, instance in sickchill.indexer:
-        if should_refresh(instance.name):
-            do_refresh = True
-            break
-
-    if do_refresh:
-        loc = "https://sickchill.github.io/scene_exceptions/scene_exceptions.json"
-        logger.info("Checking for scene exception updates from {0}".format(loc))
+    if should_refresh("sickchill"):
+        url = "https://raw.githubusercontent.com/SickChill/sickchill-exceptions/main/sickchill_exceptions.min.json"
+        logger.info("Checking for scene exception updates from {url}")
 
         session = helpers.make_session()
         proxy = settings.PROXY_SETTING
@@ -255,83 +238,67 @@ def _sickchill_exceptions_fetcher():
                 "https": proxy,
             }
 
-        try:
-            jdata = helpers.getURL(loc, session=session, returns="json")
-        except Exception:
-            jdata = None
-
-        if not jdata:
-            # When jdata is None, trouble connecting to github, or reading file failed
-            logger.debug("Check scene exceptions update failed. Unable to update from {0}".format(loc))
-        else:
+        jdata = helpers.getURL(url, session=session, returns="json")
+        if jdata:
             for indexer, instance in sickchill.indexer:
-                try:
-                    set_last_refresh(instance.name)
-                    if instance.slug not in jdata:
-                        continue
-
-                    for indexer_id in jdata[instance.slug]:
-                        alias_list = [
-                            {scene_exception: int(scene_season)}
-                            for scene_season in jdata[instance.slug][indexer_id]
-                            for scene_exception in jdata[instance.slug][indexer_id][scene_season]
-                        ]
-                        sickchill_exception_dict[indexer_id] = alias_list
-                except Exception:
+                if instance.slug not in jdata:
                     continue
+
+                for indexer_id in jdata[instance.slug]:
+                    alias_list = [
+                        {scene_exception: int(scene_season)}
+                        for scene_season in jdata[instance.slug][indexer_id]
+                        for scene_exception in jdata[instance.slug][indexer_id][scene_season]
+                    ]
+                    sickchill_exception_dict[indexer_id] = alias_list
+        else:
+            logger.debug(f"Check scene exceptions update failed. Unable to update from {url}")
+
+        set_last_refresh("sickchill")
     return sickchill_exception_dict
 
 
-def _anidb_exceptions_fetcher():
-    anidb_exception_dict = {}
+def _specific_exceptions_fetcher(show=None):
+    specific_exception_dict = {}
 
-    if should_refresh("anidb"):
-        logger.info("Checking for scene exception updates for AniDB")
-        for show in settings.showList:
-            if show.is_anime and show.indexer == 1:
+    refresh_anidb = show or should_refresh("anidb")
+    refresh_tvmaze = show or should_refresh("tvmaze")
+    if refresh_anidb or refresh_tvmaze:
+        if show:
+            logger.info(f"Checking for scene exception updates from AniDB and tvmaze for show {show}")
+        if refresh_anidb:
+            logger.info("Checking for scene exception updates for AniDB")
+        if refresh_tvmaze:
+            logger.info("Checking for scene exception updates for tvmaze")
+
+        targets = [show] if show else settings.showList
+        for show in targets:
+            if refresh_anidb and show.is_anime and show.indexer == sickchill.indexer.TVDB:
                 try:
                     anime = adba.Anime(None, name=show.name, tvdbid=show.indexerid, autoCorrectName=True, cache_dir=Path(settings.CACHE_DIR))
                 except Exception:
                     continue
                 else:
                     if anime.name and anime.name != show.name:
-                        anidb_exception_dict[show.indexerid] = [{anime.name: -1}]
+                        if show.indexerid not in specific_exception_dict:
+                            specific_exception_dict[show.indexerid] = []
+                        specific_exception_dict[show.indexerid].append({anime.name: -1})
+            if refresh_tvmaze:
+                akas = sickchill.indexer["tvmaze"].get_akas(show)
+                if akas:
+                    if show.indexerid not in specific_exception_dict:
+                        specific_exception_dict[show.indexerid] = []
+                    for aka in akas:
+                        item = {aka: -1}
+                        if item not in specific_exception_dict[show.indexerid]:
+                            specific_exception_dict[show.indexerid].append({aka: -1})
 
-        set_last_refresh("anidb")
-    return anidb_exception_dict
+        if refresh_anidb and not show:
+            set_last_refresh("anidb")
+        if refresh_tvmaze and not show:
+            set_last_refresh("tvmaze")
 
-
-xem_session = helpers.make_session()
-
-
-def _xem_exceptions_fetcher():
-    xem_exception_dict = {}
-
-    if should_refresh("xem"):
-        for indexer, instance in sickchill.indexer:
-            logger.info("Checking for XEM scene exception updates for {0}".format(instance.name))
-
-            url = "http://thexem.de/map/allNames?origin={0}&seasonNumbers=1".format(instance.slug)
-
-            parsed_json = helpers.getURL(url, session=xem_session, timeout=90, returns="json")
-            if not parsed_json:
-                logger.debug("Check scene exceptions update failed for {0}, Unable to get URL: {1}".format("theTVDB", url))
-                continue
-
-            if parsed_json["result"] == "failure":
-                continue
-
-            if parsed_json["data"]:
-                for indexerid, names in parsed_json["data"].items():
-                    try:
-                        xem_exception_dict[int(indexerid)] = names
-                    except Exception as error:
-                        logger.warning("XEM: Rejected entry: indexerid:{0}; names:{1}".format(indexerid, names))
-                        logger.debug("XEM: Rejected entry error message:{0}".format(error))
-
-        set_last_refresh("xem")
-
-    return xem_exception_dict
+    return specific_exception_dict
 
 
 def rebuild_exception_cache(indexer_id):

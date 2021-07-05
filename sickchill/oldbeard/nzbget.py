@@ -3,6 +3,7 @@ import http.client
 import xmlrpc.client
 from base64 import standard_b64encode
 
+import sickchill
 from sickchill import logger, settings
 from sickchill.helper.common import try_int
 from sickchill.oldbeard.helpers import make_context
@@ -53,12 +54,9 @@ def sendNZB(nzb, proper=False):
     dupescore = 0
     # if it aired recently make it high priority and generate DupeKey/Score
     for curEp in nzb.episodes:
-        if dupekey == "":
-            if curEp.show.indexer == 1:
-                dupekey = "SickChill-" + str(curEp.show.indexerid)
-            elif curEp.show.indexer == 2:
-                dupekey = "SickChill-tvr" + str(curEp.show.indexerid)
-        dupekey += "-" + str(curEp.season) + "." + str(curEp.episode)
+        if not dupekey:
+            indexer = sickchill.indexer
+            dupekey = f"SickChill-{indexer[curEp.show.indexer].name}-{curEp.show.indexerid}-{curEp.season}-{curEp.episode}"
         if datetime.date.today() - curEp.airdate <= datetime.timedelta(days=7):
             addToTop = True
             nzbgetprio = settings.NZBGET_PRIORITY

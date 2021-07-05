@@ -183,10 +183,24 @@ class TVDB(Indexer):
 
     @ExceptionDecorator(default_return="", catch=(requests.exceptions.RequestException, KeyError), image_api=True)
     def __call_images_api(self, show, thumb, keyType, subKey=None, lang=None, multiple=False):
-        api_results = self.series_images(show.indexerid, lang or show.lang, keyType=keyType, subKey=subKey)
-        images = getattr(api_results, keyType)(lang or show.lang)
-        images = sorted(images, key=lambda img: img["ratingsInfo"]["average"], reverse=True)
-        return [self.complete_image_url(image["fileName"]) for image in images] if multiple else self.complete_image_url(images[0]["fileName"])
+        attempts = [lang or show.lang]
+        if "en" not in attempts:
+            attempts.append("en")
+        for lang_attempt in attempts:
+            api_results = self.series_images(show.indexerid, lang_attempt)
+            api_results.query_params()
+            params = dict()
+            for item in api_results.query_params:
+                if item["keyType"] == keyType and subKey in item["subKey"]:
+                    params = item
+                    params.pop("resolution")
+                    break
+
+            if params:
+                api_results.update_filters(**params)
+                images = getattr(api_results, keyType)(lang_attempt)
+                images = sorted(images, key=lambda img: img["ratingsInfo"]["average"], reverse=True)
+                return [self.complete_image_url(image["fileName"]) for image in images] if multiple else self.complete_image_url(images[0]["fileName"])
 
     @staticmethod
     @ExceptionDecorator()

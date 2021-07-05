@@ -61,13 +61,6 @@ class Provider(TorrentProvider):
             "token": self.token,
         }
 
-        if ep_obj is not None:
-            ep_indexerid = ep_obj.show.indexerid
-            ep_indexer = ep_obj.idxr.slug
-        else:
-            ep_indexerid = None
-            ep_indexer = None
-
         for mode in search_strings:
             items = []
             logger.debug(_("Search Mode: {mode}".format(mode=mode)))
@@ -82,11 +75,11 @@ class Provider(TorrentProvider):
                     search_params["category"] = ["tv"]
             else:
                 search_params["category"] = ("tv", "movies")[mode == "Movie"]
-                search_params["sort"] = self.sorting if self.sorting else "seeders"
+                search_params["sort"] = self.sorting or "seeders"
                 search_params["mode"] = "search"
 
-                if ep_indexer == "tvdb" and ep_indexerid:
-                    search_params["search_tvdb"] = ep_indexerid
+                if ep_obj and ep_obj.show.indexer == 1 and ep_obj.show.indexerid:
+                    search_params["search_tvdb"] = ep_obj.show.indexerid
                 else:
                     search_params.pop("search_tvdb", None)
 

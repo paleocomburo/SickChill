@@ -2,6 +2,7 @@ import math
 import socket
 import time
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import jsonrpclib
 
@@ -12,6 +13,9 @@ from sickchill.oldbeard import classes, scene_exceptions, tvcache
 from sickchill.oldbeard.common import cpu_presets
 from sickchill.oldbeard.helpers import sanitizeSceneName
 from sickchill.providers.torrent.TorrentProvider import TorrentProvider
+
+if TYPE_CHECKING:
+    from sickchill.tv import TVEpisode
 
 
 class Provider(TorrentProvider):
@@ -44,12 +48,12 @@ class Provider(TorrentProvider):
             return self._check_auth()
 
         if "api-error" in parsed_json:
-            logger.debug("Incorrect authentication credentials: {0}".format(parsed_json["api-error"]))
-            raise AuthException("Your authentication credentials for " + self.name + " are incorrect, check your config.")
+            logger.debug(f"Incorrect authentication credentials: {parsed_json['api-error']}")
+            raise AuthException(f"Your authentication credentials for {self.name} are incorrect, check your config.")
 
         return True
 
-    def search(self, search_params, age=0, ep_obj=None):  # pylint:disable=too-many-locals
+    def search(self, search_params, age=0, ep_obj: "TVEpisode" = None):
 
         self._check_auth()
 
@@ -59,11 +63,11 @@ class Provider(TorrentProvider):
 
         # age in seconds
         if age:
-            params["age"] = "<=" + str(int(age))
+            params["age"] = f"<={age}"
 
         if search_params:
             params.update(search_params)
-            logger.debug("Search string: {0}".format(search_params))
+            logger.debug(f"Search string: {search_params}")
 
         parsed_json = self._api_call(apikey, params)
         if not parsed_json:
@@ -101,7 +105,7 @@ class Provider(TorrentProvider):
                 (title, url) = self._get_title_and_url(torrent_info)
 
                 if title and url:
-                    logger.debug("Found result: {0} ".format(title))
+                    logger.debug(f"Found result: {title}")
                     results.append(torrent_info)
 
         # FIXME SORT RESULTS
@@ -122,7 +126,7 @@ class Provider(TorrentProvider):
             elif error == (-32002, "Call Limit Exceeded"):
                 logger.warning("You have exceeded the limit of 150 calls per hour, per API key which is unique to your user account")
             else:
-                logger.exception("JSON-RPC protocol error while accessing provider. Error: {0} ".format(repr(error)))
+                logger.exception(f"JSON-RPC protocol error while accessing provider. Error: {error}")
             parsed_json = {"api-error": str(error)}
             return parsed_json
 
@@ -131,13 +135,13 @@ class Provider(TorrentProvider):
 
         except socket.error as error:
             # Note that sometimes timeouts are thrown as socket errors
-            logger.warning("Socket error while accessing provider. Error: {0} ".format(error[1]))
+            logger.warning(f"Socket error while accessing provider. Error: {error[1]}")
 
         except Exception as error:
             errorstring = str(error)
             if errorstring.startswith("<") and errorstring.endswith(">"):
                 errorstring = errorstring[1:-1]
-            logger.warning("Unknown error while accessing provider. Error: {0} ".format(errorstring))
+            logger.warning(f"Unknown error while accessing provider. Error: {errorstring}")
 
         return parsed_json
 
@@ -185,8 +189,26 @@ class Provider(TorrentProvider):
 
         return title, url
 
-    def get_season_search_strings(self, ep_obj):
+    def __loop_exceptions(self, current_params, ep_obj: "TVEpisode"):
         search_params = []
+
+        if ep_obj.show.indexer == 1:
+            current_params["tvdb"] = ep_obj.show.indexerid
+            search_params.append(current_params)
+        else:
+            name_exceptions = set(scene_exceptions.get_scene_exceptions(ep_obj.show.indexerid))
+            name_exceptions.add(ep_obj.show.name)
+            for name in name_exceptions:
+                # Search by name if we don't have tvdb id
+                current_params["series"] = sanitizeSceneName(name)
+                search_params.append(current_params)
+
+        return search_params
+
+    def get_season_search_strings(self, ep_obj: "TVEpisode"):
+        if not ep_obj:
+            return [{}]
+
         current_params = {"category": "Season"}
 
         # Search for entire seasons: no need to do special things for air by date or sports shows
@@ -195,28 +217,15 @@ class Provider(TorrentProvider):
             current_params["name"] = str(ep_obj.airdate).split("-")[0]
         else:
             # BTN uses the same format for both Anime and TV
-            current_params["name"] = "Season " + str(ep_obj.scene_season)
+            current_params["name"] = f"Season {ep_obj.scene_season}"
 
-        # search
-        if ep_obj.show.indexer == 1:
-            current_params["tvdb"] = ep_obj.show.indexerid
-            search_params.append(current_params)
-        else:
-            name_exceptions = list(set(scene_exceptions.get_scene_exceptions(ep_obj.show.indexerid) + [ep_obj.show.name]))
-            for name in name_exceptions:
-                # Search by name if we don't have tvdb id
-                current_params["series"] = sanitizeSceneName(name)
-                search_params.append(current_params)
+        return self.__loop_exceptions(current_params, ep_obj)
 
-        return search_params
-
-    def get_episode_search_strings(self, ep_obj, add_string=""):
-
+    def get_episode_search_strings(self, ep_obj: "TVEpisode", add_string: str = ""):
         if not ep_obj:
             return [{}]
 
-        to_return = []
-        search_params = {"category": "Episode"}
+        current_params = {"category": "Episode"}
 
         # episode
         if ep_obj.show.air_by_date or ep_obj.show.sports:
@@ -224,24 +233,13 @@ class Provider(TorrentProvider):
 
             # BTN uses dots in dates, we just search for the date since that
             # combined with the series identifier should result in just one episode
-            search_params["name"] = date_str.replace("-", ".")
+            current_params["name"] = date_str.replace("-", ".")
         else:
             # BTN uses the same format for both Anime and TV
             # Do a general name search for the episode, formatted like SXXEYY
-            search_params["name"] = "{ep}".format(ep=episode_num(ep_obj.scene_season, ep_obj.scene_episode))
+            current_params["name"] = f"{episode_num(ep_obj.scene_season, ep_obj.scene_episode)}"
 
-        # search
-        if ep_obj.show.indexer == 1:
-            search_params["tvdb"] = ep_obj.show.indexerid
-            to_return.append(search_params)
-        else:
-            # add new query string for every exception
-            name_exceptions = list(set(scene_exceptions.get_scene_exceptions(ep_obj.show.indexerid) + [ep_obj.show.name]))
-            for cur_exception in name_exceptions:
-                search_params["series"] = sanitizeSceneName(cur_exception)
-                to_return.append(search_params)
-
-        return to_return
+        return self.__loop_exceptions(current_params, ep_obj)
 
     def _do_general_search(self, search_string):
         # 'search' looks as broad is it can find. Can contain episode overview and title for example,

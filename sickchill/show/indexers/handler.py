@@ -1,10 +1,11 @@
 import re
+from typing import Dict, ItemsView, TypedDict, Union
 
 from sickchill import logger, settings
 from sickchill.helper.common import try_int
 from sickchill.tv import Show, TVEpisode
 
-from .tvdb import TVDB
+from . import tvdb, tvmaze
 
 
 class ShowIndexer(object):
@@ -12,17 +13,20 @@ class ShowIndexer(object):
     TVRAGE = 2
     FANART = 13
     TMDB = 14
+    TVMAZE = 15
+    IMDB = 16
 
     def __init__(self):
         if settings.INDEXER_DEFAULT is None:
             settings.INDEXER_DEFAULT = 1
 
-        self.indexers = {1: TVDB()}
+        self.indexers: Dict[int, Union[tvdb.TVDB, tvmaze.TVMAZE]] = {self.TVDB: tvdb.TVDB(), self.TVMAZE: tvmaze.TVMAZE()}
+
         self.__build_indexer_attribute_getters()
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: Union[str, int]) -> Union[tvdb.TVDB, tvmaze.TVMAZE]:
         if isinstance(item, str):
-            for index, indexer in self.indexers:
+            for index, indexer in self:
                 if item in (indexer.name, indexer.slug):
                     return indexer
 
@@ -31,7 +35,7 @@ class ShowIndexer(object):
 
         return self.indexers[item]
 
-    def __iter__(self):
+    def __iter__(self) -> ItemsView[int, Union[tvdb.TVDB, tvmaze.TVMAZE]]:
         for i in self.indexers.items():
             yield i
 

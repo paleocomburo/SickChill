@@ -1,6 +1,6 @@
 import random
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import List, TYPE_CHECKING
 
 import rarfile
 
@@ -11,6 +11,7 @@ from .init_helpers import setup_gettext, sickchill_dir
 
 if TYPE_CHECKING:
     from .movies import MovieList
+    from .tv import TVShow
 
 setup_gettext()
 
@@ -188,8 +189,8 @@ IGNORE_WORDS = "german,french,core2hd,dutch,swedish,reenc,MrLss"
 IGNORED_SUBS_LIST = "dk,fin,heb,kor,nor,nordic,pl,swe"
 IMAGE_CACHE = None
 INDEXER_DEFAULT = 1
-INDEXER_DEFAULT_LANGUAGE = None
-INDEXER_TIMEOUT = None
+INDEXER_DEFAULT_LANGUAGE: str = "en"
+INDEXER_TIMEOUT: int = 20
 INIT_LOCK = Lock()
 ITASA_PASS = None
 ITASA_USER = None
@@ -383,7 +384,7 @@ SAB_USERNAME = None
 SCENE_DEFAULT = False
 searchQueueScheduler = None
 SEASON_FOLDERS_DEFAULT = False
-showList = []
+showList: List["TVShow"] = []
 showQueueScheduler = None
 SHOWS_RECENT = []
 SHOWUPDATE_HOUR = None
