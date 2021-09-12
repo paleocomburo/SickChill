@@ -33,7 +33,9 @@ rm -f libffi6_3.2.1-9_armhf.deb
 ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" skipcache
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-export PATH="/root/.local/bin:$PATH" && ln -s /usr/bin/python3 /usr/bin/python
+source $HOME/.cargo/env && \
+export PATH="/root/.local/bin:$PATH" && \
+ln -s /usr/bin/python3 /usr/bin/python
 
 RUN pip install --pre --upgrade --prefer-binary \
 poetry pip wheel setuptools virtualenv
