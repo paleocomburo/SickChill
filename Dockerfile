@@ -20,17 +20,22 @@ COPY poetry.lock /app/sickchill
 
 RUN sed -i -e's/ main/ main contrib non-free/gm' /etc/apt/sources.list
 RUN apt-get update -qq && apt-get install -yq git libxml2 libxml2-dev libxslt1.1 \
-libxslt1-dev libffi6 libffi-dev libssl1.1 libssl-dev python3-dev \
-libmediainfo0v5 libmediainfo-dev mediainfo unrar curl build-essential && \
+libxslt1-dev libffi-dev libssl1.1 libssl-dev python3-dev \
+libmediainfo0v5 libmediainfo-dev mediainfo unrar-free curl build-essential && \
 apt-get clean -yqq && rm -rf /var/lib/apt/lists/*
+
+# unrar non-free is not available for ARM HF, use the free version.
+RUN curl -OLsS http://http.us.debian.org/debian/pool/main/libf/libffi/libffi6_3.2.1-9_armhf.deb && \
+dpkg -i libffi6_3.2.1-9_armhf.deb && \
+rm -f libffi6_3.2.1-9_armhf.deb
 
 # Break layer cache, always install poetry and depends.
 ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" skipcache
 
-
 RUN pip install --pre --upgrade --prefer-binary \
-poetry pip wheel setuptools virtualenv && \
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+poetry pip wheel setuptools virtualenv
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
 export PATH="/root/.local/bin:$PATH" && ln -s /usr/bin/python3 /usr/bin/python && \
 poetry export --format requirements.txt > requirements.txt && \
 python -m virtualenv -p python3.7 .venv && \
