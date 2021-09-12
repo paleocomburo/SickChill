@@ -37,7 +37,8 @@ export PATH="$HOME/.cargo/bin:/root/.local/bin:$PATH" && \
 ln -s /usr/bin/python3 /usr/bin/python
 
 RUN pip install --pre --upgrade --prefer-binary \
-poetry pip wheel setuptools virtualenv setuptools_rust
+pip setuptools virtualenv setuptools_rust && \
+pip install --pre --upgrade --prefer-binary poetry wheel
 
 RUN poetry export --format requirements.txt > requirements.txt && \
 python -m virtualenv -p python3.7 .venv && \
